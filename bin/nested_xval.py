@@ -17,6 +17,12 @@ from collections import deque
 sys.path.insert(1, os.path.join(os.path.dirname(os.getcwd()), 'notebooks'))
 from pgv_ml_utils import *
 
+## this script runs nested cross validation (10 outer folds)
+## each test fold runs a grid search over a range of hyperparameters and feature vectors
+## each grid search is performed using an inner loop of k-fold cross validation
+## the horizontal stacking model (previously determined to be optimal) is stored for each run for future testing
+## the results of the 10 folds are stored in a .csv
+## the 10 fold testing concatenated target and feature vectors are stored in a .pkl file
 
 def nested_xval():
 

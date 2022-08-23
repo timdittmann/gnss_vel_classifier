@@ -118,6 +118,15 @@ def fs_to_Xy_horizontal(df, param):
     function to horizontally concatenate velocity components (East, North Up) into feature sets.
     Feature vector m samples x 3*n (features).
     Target vector is a single m x 1, with logic to check each component's label into single label.
+
+    :param df: dataframe of
+    :param dict of hyperparameters
+
+    :return X_: feature vector
+            y_ : target vector
+            name_list: list of feature vector columns
+            times: time of feature (last time of array)
+
     '''
     X_list = []
     y_list = []
@@ -192,6 +201,14 @@ def fs_to_Xy_vertical(df, param):
     function to vertically concatenate velocity components (East, North Up) into feature sets.
     Feature vector m*3 samples x n (features).
     Target vector is a single 3*m x 1, with logic to check each component's label into single label.
+
+    :param df: dataframe of
+    :param dict of hyperparameters
+
+    :return X_: feature vector
+            y_ : target vector
+            name_list: list of feature vector columns
+            times: time of feature (last time of array)
     '''
     X_list = []
     y_list = []
@@ -250,6 +267,14 @@ def list_to_featurearrays(fold, param):
     '''
     convert list of station/events to concatenated dataframes
     then convert dataframes to feature sets using feature extraction function
+
+    :param train_set: list of strings of eventID's
+    :param param: dict of hyperparameters
+
+    :return X_: feature vector
+            y_ : target vector
+            name_list: list of feature vector columns
+            times: time of feature (last time of array)
     '''
 
     path = [os.path.join(os.path.dirname(os.getcwd()), 'data/feature_set/', '%s_*' % f) for f in fold]
@@ -257,7 +282,6 @@ def list_to_featurearrays(fold, param):
     for j in path:
         fold_set_list += glob.glob(j)
     fold = pd.read_parquet(fold_set_list)
-    # X_, y_, name_list, times=fs_to_Xy_horizontal(fold, params)
     if param['stacking'] == 'horizontal':
         X_, y_, name_list, times = fs_to_Xy_horizontal(fold, param)
     if param['stacking'] == 'vertical':
@@ -269,8 +293,13 @@ def list_to_featurearrays(fold, param):
 def k_fold_results(train_set, param):
     '''
     cross validate using k-fold approach #https://scikit-learn.org/stable/modules/cross_validation.html
-    can't use scikit learn api because I want to keep the event/station pairs seperated
-    so wrote own to return precision, recall and f1
+    can't use scikit learn api because I want to keep the event/station pairs separate to avoid 'leakage'
+    so wrote function to loop through folds return precision, recall and f1
+
+    :param train_set: list of strings of eventID's
+    :param param: dict of hyperparameters
+
+    :return mean precision, recall, f1, threshold across k-folds
     '''
     stats = []
 
