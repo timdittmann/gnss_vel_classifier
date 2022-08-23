@@ -30,21 +30,101 @@ def read_meta(path):
 # FEATURE SET FUNCTIONS
 pd.options.mode.chained_assignment = None  # default='warn'
 
+class gnss_station:
+    """
+    Class object containing data and metadata for a gnss station
+    modified from event_response_notebook
+    """
+
+    def __init__(self, fourchar):
+        self.name = fourchar
+
+class earthquake:
+    """
+    Class object containing parameters for a specific earthquake event
+    """
+
+    def __init__(self, eventID):
+        self.eventID = eventID
+
+def calculate_p_s_arrival_depth(station, eq):
+    """
+    Function calculates arrival times for P and S waves
+
+    Parameters
+    ----------
+    :param station: gtsm_station class object
+        Must include the following attributes
+        :station.lat: float
+        :station.long: float
+    :param eq: earthquake class object
+        Must include the following attributes
+        :eq.lat: float
+        :eq.long: float
+        :eq.time: datetime.datetime
+    :return:
+        Adds attributes to station object
+        :station.p_delta: datetime.timedelta
+        :station.s_delta: datetime.timedelta
+        :station.p_arrival: datetime.datetime
+        :station.s_arrival: datetime.datetime
+    """
+
+    event_loc = "[" + str(eq.lat) + "," + str(eq.long) + "]"
+    station_loc = "[" + str(station.lat) + "," + str(station.long) + "]"
+    eq_depth = str(eq.depth)
+    url = "https://service.iris.edu/irisws/traveltime/1/query?evloc=" + event_loc + "&staloc=" + station_loc + "&evdepth=" + eq_depth
+    df = pd.read_table(url, sep="\s+", header=1, index_col=2, usecols=[2, 3])
+
+    station.p_delta = datetime.timedelta(
+        seconds=float(df.iloc[((df.index == 'P') | (df.index == 'p')).argmax()].Travel))
+    station.s_delta = datetime.timedelta(
+        seconds=float(df.iloc[((df.index == 'S') | (df.index == 's')).argmax()].Travel))
+    station.p_arrival = eq.time + station.p_delta
+    station.s_arrival = eq.time + station.s_delta
+    return station
+
+def load_event_data(eventID):
+    """
+    Function loads earthquake parameters for a given event into an earthquake object
+
+    Parameters
+    ----------
+    :param eventID: str
+    :return: eq: earthquake class object
+    """
+
+    url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=" + eventID
+    response = urllib.request.urlopen(url)
+    data = json.loads(response.read())
+
+    # define earthquake class object
+    eq = earthquake(eventID)
+    eq.eventID
+    eq.name = data["properties"]['title']
+    eq.mag = data["properties"]['mag']
+    eq.unix_time = data['properties']['time']
+    eq.time = datetime.datetime.fromtimestamp(eq.unix_time / 1000.0)
+    eq.time = pd.to_datetime(eq.unix_time, unit='ms')
+    eq.lat = data["geometry"]['coordinates'][1]
+    eq.long = data["geometry"]['coordinates'][0]
+    eq.depth = data["geometry"]['coordinates'][2]
+
+    # write_event_coords(eq)
+    return eq
+
 def fs_to_Xy_horizontal(df, param):
     '''
     function to horizontally concatenate velocity components (East, North Up) into feature sets.
     Feature vector m samples x 3*n (features).
     Target vector is a single m x 1, with logic to check each component's label into single label.
-
     '''
     X_list = []
     y_list = []
     name_list_tmp = []
 
     # drop 3's
-    # logic, if row contains a 3 but not a 1
-    # if fs_params['maybes']==3:
-    # df=df[(df.dedt_Y!=3) & (df.dndt_Y!=3) & (df.dudt_Y!=3)]
+    # logic, if row contains a 3 but not a 2, discard
     df = df.drop(df[((df.dedt_Y == 3) | (df.dndt_Y == 3) | (df.dudt_Y == 3)) & (
                 (df.dedt_Y != 2) & (df.dndt_Y != 2) & (df.dudt_Y != 2))].index)
     # vertically stack components into single arrays (X, Y)
@@ -77,8 +157,6 @@ def fs_to_Xy_horizontal(df, param):
         temp = np.column_stack((sortedtmp, med_array, mad_array, kh_array))
         columns = ['%s max1' % direc, '%s max2' % direc, '%s max3' % direc, '%s max4' % direc, '%s med' % direc,
                    '%s mad' % direc, '%s snr' % direc]
-        ##
-        # temp=df[columns].to_numpy()
 
         # power spectra are in a np array within the dataframe
         powers = pd.DataFrame(df['d%sdt_power' % direc].tolist(), index=df.index).to_numpy()[:, 1:30]
@@ -91,8 +169,6 @@ def fs_to_Xy_horizontal(df, param):
 
         #########TARGET VECTOR#########
         y_temp = df['d%sdt_Y' % direc]
-        # Make 3's "maybe" param (1 or 2)
-        # y_temp.loc[df['d%sdt_Y' %direc] == 3] = fs_params['maybes']
 
         # Change labels to match "positivity" for ML
         # make 1's into 0's and 2's into 1's-- motion is "positive" class
@@ -121,16 +197,12 @@ def fs_to_Xy_vertical(df, param):
     y_list = []
     name_list_tmp = []
     time_list = []
-
-    # df=df[(df.dedt_Y!=3) & (df.dndt_Y!=3) & (df.dudt_Y!=3)]
     # vertically stack components into single arrays (X, Y)
 
-    for direc in param['dims'][:1]:  # only include HORIZONTALS FOR NOW
+    for direc in param['dims'][:1]:  # only include HORIZONTALS
 
-        columns = ['d%sdt_max_val' % direc, 'd%sdt_max2_val' % direc, 'd%sdt_med_val' % direc,
-                   'd%sdt_min_val' % direc, 'd%sdt_min2_val' % direc, 'd%sdt_mad_val' % direc]
-
-        tmp_df = df[df['d%sdt_Y' % direc] != 3]  # drop components with 3
+        # drop components with 3
+        tmp_df = df[df['d%sdt_Y' % direc] != 3]
         ##
         columns2 = ['d%sdt_max_val' % direc, 'd%sdt_max2_val' % direc, 'd%sdt_min_val' % direc,
                     'd%sdt_min2_val' % direc]
@@ -148,23 +220,16 @@ def fs_to_Xy_vertical(df, param):
         temp = np.column_stack((sortedtmp, med_array, mad_array, kh_array))
         columns = ['%s max1' % direc, '%s max2' % direc, '%s max3' % direc, '%s max4' % direc, '%s med' % direc,
                    '%s mad' % direc, '%s snr' % direc]
-        ##
-        # temp=df[columns].to_numpy()
 
-        # columns=['d%sdt_med_val' %direc] #
-
-        # temp=tmp_df[columns].to_numpy()
         powers = pd.DataFrame(tmp_df['d%sdt_power' % direc].tolist(), index=tmp_df.index).to_numpy()[:, 1:30]
         names = columns + ['%s_P%s' % (direc, f) for f in np.arange(powers.shape[1])]
         name_list_tmp += [names]
 
         X_temp = np.hstack((temp, powers))
-        # X_temp=temp #
         X_list += [X_temp]
 
+        #########TARGET VECTOR#########
         y_temp = tmp_df['d%sdt_Y' % direc]
-        # Make 3's 1's
-        # y_temp.loc[df['d%sdt_Y' %direc] == 3] = maybes
 
         # Change labels to match "positivity"
         # make 1's into 0's and 2's into 1's-- motion is "positive" class
@@ -248,7 +313,7 @@ def k_fold_results(train_set, param):
 def grid_search(train_set, params):
     '''
     grid searches through set of parameters (params) for a given dataset (train_set)
-    returns peak f1 params and stats
+    returns peak f1 params and stats as tuple
     '''
     result = []
     for param in params:
@@ -264,7 +329,8 @@ def grid_search(train_set, params):
 
 def read_vel(array):
     '''
-    array is array from li_df dataframe
+    reads in snivel velocity txt files into a pandas dataframe
+    array is array from li_df dataframe of station/doy
     '''
 
     fname = 'output/%s/velocities_%s_%s_%s.txt' % (array.eventID, array.station, array.doy, array.year)
@@ -279,7 +345,8 @@ def read_vel(array):
 
 def read_vel_fname(fname):
     '''
-    fname is snivel velocity txt file
+    reads in snivel velocity txt files into a pandas dataframe
+    fname is snivel velocity txt file: str
     '''
 
     vel_df = pd.read_csv(fname, header=None, sep=' ', usecols=[1, 2, 3, 4, 5],
@@ -306,7 +373,7 @@ def gps_2_utc(gpstime):
 def gpsleapsec(gpssec):
     '''
     number of leapseconds at given gps time epoch
-    taken from B.Crowell's Snivel package
+    repurposed from B.Crowell's Snivel package
     '''
     leaptimes = np.array(
         [46828800, 78364801, 109900802, 173059203, 252028804, 315187205, 346723206, 393984007, 425520008, 457056009,
@@ -324,7 +391,7 @@ def kh_threshold(ds):
 
 def pgv_threshold(ds, quantile_perc):
     """
-            estimates ncx2 threshold
+            estimates non central chi squared threshold for a given quantile
 
             Parameters
             ----------
@@ -347,6 +414,7 @@ def pgv_threshold(ds, quantile_perc):
 def get_features(dataframe, obs):
     """
         extracts features for given obs
+        assumes 30s 5Hz windows
 
         Parameters
         ----------
@@ -387,93 +455,6 @@ def distance(
     dist = geopy.distance.geodesic(ep, gps).km
     hypo = np.sqrt(np.power(dist, 2) + np.power(depth, 2))
     return hypo
-
-
-def calculate_p_s_arrival_depth(station, eq):
-    """
-    Function calculates arrival times for P and S waves
-
-    Parameters
-    ----------
-    :param station: gtsm_station class object
-        Must include the following attributes
-        :station.lat: float
-        :station.long: float
-    :param eq: earthquake class object
-        Must include the following attributes
-        :eq.lat: float
-        :eq.long: float
-        :eq.time: datetime.datetime
-    :return:
-        Adds attributes to station object
-        :station.p_delta: datetime.timedelta
-        :station.s_delta: datetime.timedelta
-        :station.p_arrival: datetime.datetime
-        :station.s_arrival: datetime.datetime
-    """
-
-    event_loc = "[" + str(eq.lat) + "," + str(eq.long) + "]"
-    station_loc = "[" + str(station.lat) + "," + str(station.long) + "]"
-    eq_depth = str(eq.depth)
-    url = "https://service.iris.edu/irisws/traveltime/1/query?evloc=" + event_loc + "&staloc=" + station_loc + "&evdepth=" + eq_depth
-    df = pd.read_table(url, sep="\s+", header=1, index_col=2, usecols=[2, 3])
-
-    station.p_delta = datetime.timedelta(
-        seconds=float(df.iloc[((df.index == 'P') | (df.index == 'p')).argmax()].Travel))
-    station.s_delta = datetime.timedelta(
-        seconds=float(df.iloc[((df.index == 'S') | (df.index == 's')).argmax()].Travel))
-    station.p_arrival = eq.time + station.p_delta
-    station.s_arrival = eq.time + station.s_delta
-    return station
-
-
-class gnss_station:
-    """
-    Class object containing data and metadata for a gnss station
-    """
-
-    def __init__(self, fourchar):
-        self.name = fourchar
-
-
-class earthquake:
-    """
-    Class object containing parameters for a specific earthquake event
-    """
-
-    def __init__(self, eventID):
-        self.eventID = eventID
-
-
-def load_event_data(eventID):
-    """
-    Function loads earthquake parameters for a given event into an earthquake object
-
-    Parameters
-    ----------
-    :param eventID: str
-    :return: eq: earthquake class object
-    """
-
-    url = "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=" + eventID
-    response = urllib.request.urlopen(url)
-    data = json.loads(response.read())
-
-    # define earthquake class object
-    eq = earthquake(eventID)
-    eq.eventID
-    eq.name = data["properties"]['title']
-    eq.mag = data["properties"]['mag']
-    eq.unix_time = data['properties']['time']
-    eq.time = datetime.datetime.fromtimestamp(eq.unix_time / 1000.0)
-    eq.time = pd.to_datetime(eq.unix_time, unit='ms')
-    eq.lat = data["geometry"]['coordinates'][1]
-    eq.long = data["geometry"]['coordinates'][0]
-    eq.depth = data["geometry"]['coordinates'][2]
-
-    # write_event_coords(eq)
-    return eq
-
 
 def rt_class(row, threshold, fs_params, clf, save_plot=False):
     """
